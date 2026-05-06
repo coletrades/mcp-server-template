@@ -25,40 +25,40 @@ async def discord_fetch(path: str) -> dict:
 
 async def send_to_poke(message: str):
     async with httpx.AsyncClient() as client:
-        await client.post(
+        res = await client.post(
             "https://poke.com/api/v1/inbound-sms/webhook",
             headers={"Authorization": f"Bearer {POKE_API_KEY}", "Content-Type": "application/json"},
             json={"message": message}
         )
+        print(f"Poke response: {res.status_code} {res.text}")
 
 async def poll_mentions():
     global DISCORD_BOT_ID
-    # Get bot user ID
     async with httpx.AsyncClient() as client:
         res = await client.get(
-            f"{DISCORD_API}/@me",
+            f"{DISCORD_API}/users/@me",
             headers={"Authorization": f"Bot {TOKEN}"}
         )
         bot = res.json()
         DISCORD_BOT_ID = bot["id"]
+    print(f"Bot ID: {DISCORD_BOT_ID}")
 
     seen_ids = set()
-    print(f"Polling for mentions of bot {DISCORD_BOT_ID}...")
 
     while True:
         try:
             async with httpx.AsyncClient() as client:
-                # Get all guilds
                 res = await client.get(
                     f"{DISCORD_API}/users/@me/guilds",
                     headers={"Authorization": f"Bot {TOKEN}"}
                 )
                 guilds = res.json()
+                print(f"Found {len(guilds)} guilds")
 
             for guild in guilds:
-                # Get channels
                 channels = await discord_fetch(f"/guilds/{guild['id']}/channels")
                 text_channels = [c for c in channels if c["type"] == 0]
+                print(f"Checking {len(text_channels)} channels in {guild['name']}")
 
                 for channel in text_channels:
                     try:
@@ -73,18 +73,19 @@ async def poll_mentions():
                             if msg["id"] in seen_ids:
                                 continue
                             seen_ids.add(msg["id"])
-                            # Check if bot is mentioned
                             mentions = [m["id"] for m in msg.get("mentions", [])]
+                            print(f"New message in #{channel['name']} from {msg['author']['username']}: mentions={mentions}")
                             if DISCORD_BOT_ID in mentions:
                                 text = f"Someone mentioned you in #{channel['name']}: {msg['author']['username']} said: {msg['content']} (channel_id: {channel['id']})"
-                                print(f"Mention found: {text}")
+                                print(f"Mention detected! Sending to Poke: {text}")
                                 await send_to_poke(text)
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"Error in channel {channel['name']}: {e}")
 
         except Exception as e:
             print(f"Polling error: {e}")
 
+        print(f"Poll complete, seen {len(seen_ids)} messages so far")
         await asyncio.sleep(15)
 
 def start_polling():
@@ -119,7 +120,6 @@ async def send_message(channel_id: str, message: str) -> str:
         return "Message sent successfully!"
 
 if __name__ == "__main__":
-    # Start polling in background thread
     t = threading.Thread(target=start_polling, daemon=True)
     t.start()
     mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
