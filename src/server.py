@@ -1,31 +1,38 @@
-#!/usr/bin/env python3
-import os
+import httpx
 from fastmcp import FastMCP
 
-mcp = FastMCP("Sample MCP Server")
+mcp = FastMCP(
+    name="discord-mcp",
+    instructions="Use this integration to read messages and list channels from Discord."
+)
 
-@mcp.tool(description="Greet a user by name with a welcome message from the MCP server")
-def greet(name: str) -> str:
-    return f"Hello, {name}! Welcome to our sample MCP server running on Heroku!"
+DISCORD_API = "https://discord.com/api/v10"
 
-@mcp.tool(description="Get information about the MCP server including name, version, environment, and Python version")
-def get_server_info() -> dict:
-    return {
-        "server_name": "Sample MCP Server",
-        "version": "1.0.0",
-        "environment": os.environ.get("ENVIRONMENT", "development"),
-        "python_version": os.sys.version.split()[0]
-    }
+import os
+TOKEN = os.environ.get("DISCORDBOTTOKEN", "")
+
+async def discord_fetch(path: str) -> dict:
+    async with httpx.AsyncClient() as client:
+        res = await client.get(
+            f"{DISCORD_API}{path}",
+            headers={"Authorization": f"Bot {TOKEN}"}
+        )
+        res.raise_for_status()
+        return res.json()
+
+@mcp.tool
+async def list_channels(guild_id: str) -> str:
+    """List all text channels in a Discord server by guild ID."""
+    channels = await discord_fetch(f"/guilds/{guild_id}/channels")
+    text_channels = [{"id": c["id"], "name": c["name"]} for c in channels if c["type"] == 0]
+    return str(text_channels)
+
+@mcp.tool
+async def get_messages(channel_id: str, limit: int = 10) -> str:
+    """Fetch recent messages from a Discord channel by channel ID."""
+    messages = await discord_fetch(f"/channels/{channel_id}/messages?limit={limit}")
+    simplified = [{"author": m["author"]["username"], "content": m["content"]} for m in messages]
+    return str(simplified)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    host = "0.0.0.0"
-    
-    print(f"Starting FastMCP server on {host}:{port}")
-    
-    mcp.run(
-        transport="http",
-        host=host,
-        port=port,
-        stateless_http=True
-    )
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
